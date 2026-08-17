@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-client.h>
+#include "animation.h"
 #include "background-image.h"
 #include "cairo.h"
 #include "pool-buffer.h"
@@ -51,6 +52,10 @@ struct swaylock_colors {
 struct swaylock_args {
 	struct swaylock_colors colors;
 	enum background_mode mode;
+	enum background_mode animation_mode;
+	cairo_filter_t animation_filter;
+	uint32_t animation_size; // percentage of the output the frames cover
+	char *animation_dir;
 	char *font;
 	uint32_t font_size;
 	uint32_t radius;
@@ -70,6 +75,10 @@ struct swaylock_args {
 	int ready_fd;
 	bool indicator_idle_visible;
 };
+
+// An empty password buffer sits one step before the start of the animation, so
+// that the first character typed lands on the first frame
+#define ANIM_FRAME_START (-1)
 
 struct swaylock_password {
 	size_t len;
@@ -96,6 +105,9 @@ struct swaylock_state {
 	enum auth_state auth_state; // state of the authentication attempt
 	enum input_state input_state; // state of the password buffer and key inputs
 	uint32_t highlight_start; // position of highlight; 2048 = 1 full turn
+	uint32_t typing_tint; // random RGBA wash picked on each key press
+	struct swaylock_animation animation; // frames played back while typing
+	int32_t anim_frame; // position in the animation; advances with each key
 	int failed_attempts;
 	bool run_display, locked;
 	struct ext_session_lock_manager_v1 *ext_session_lock_manager_v1;
@@ -111,6 +123,7 @@ struct swaylock_surface {
 	struct wl_surface *child; // indicator surface made into subsurface
 	struct wl_subsurface *subsurface;
 	struct ext_session_lock_surface_v1 *ext_session_lock_surface_v1;
+	struct pool_buffer background_buffers[2];
 	struct pool_buffer indicator_buffers[2];
 	bool created;
 	bool dirty;
@@ -122,6 +135,10 @@ struct swaylock_surface {
 	struct wl_callback *frame;
 	// Dimensions of last wl_buffer committed to background surface
 	int last_buffer_width, last_buffer_height;
+	// Tint and animation frame of the last wl_buffer committed to the
+	// background surface
+	uint32_t last_buffer_tint;
+	cairo_surface_t *last_buffer_frame;
 };
 
 // There is exactly one swaylock_image for each -i argument

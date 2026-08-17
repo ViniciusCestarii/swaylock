@@ -91,6 +91,27 @@ Locks your Wayland session.
 	this sets the background of the image to the given color. Defaults to light
 	gray (A3A3A3).
 
+*--animation-dir* <path>
+	Play the images in the given directory over the background while a password
+	is being typed: each character advances one frame, each backspace steps one
+	frame back, and the sequence wraps around in both directions. Frames are
+	ordered by the number leading their file name, so 1-nyancat.png,
+	2-nyancat.png and so on play in that order.
+
+*--animation-filter* <smooth|nearest>
+	Scaling filter for the animation frames. Defaults to smooth, which suits
+	photographic frames such as those extracted from a video clip. Use nearest
+	for pixel art, which would otherwise be blurred as it is scaled up.
+
+*--animation-scaling* <mode>
+	Scaling mode for the animation frames, taking the same values as
+	*--scaling*. Defaults to fit.
+
+*--animation-size* <percent>
+	Share of the screen, between 1 and 100, that the animation frames cover.
+	The frames are centered within it. Defaults to 100. Lowering it limits how
+	far a low resolution source has to be scaled up, which keeps it sharper.
+
 *--bs-hl-color* <rrggbb[aa]>
 	Sets the color of backspace highlight segments.
 

@@ -89,6 +89,7 @@ static void clear_password(void *data) {
 	state->input_state = INPUT_STATE_CLEAR;
 	schedule_input_idle(state);
 	clear_password_buffer(&state->password);
+	state->anim_frame = ANIM_FRAME_START;
 	damage_state(state);
 }
 
@@ -128,13 +129,19 @@ static void submit_password(struct swaylock_state *state) {
 	damage_state(state);
 }
 
-static void update_highlight(struct swaylock_state *state) {
+// Moves the typing feedback one step forwards (a letter) or backwards (a
+// backspace): the animation frame, the ring highlight and the background wash
+static void update_typing_feedback(struct swaylock_state *state,
+		int32_t frame_delta) {
+	state->anim_frame += frame_delta;
 	// Advance a random amount between 1/4 and 3/4 of a full turn
 	state->highlight_start =
 		(state->highlight_start + (rand() % 1024) + 512) % 2048;
+	// Wash the background with a random hue, keyed to the same key press
+	state->typing_tint = hsv_to_u32(rand() % 360, 0.65, 1.0, 0x55);
 }
 
-void swaylock_handle_key(struct swaylock_state *state,
+static void handle_key(struct swaylock_state *state,
 		xkb_keysym_t keysym, uint32_t codepoint) {
 
 	switch (keysym) {
@@ -152,7 +159,7 @@ void swaylock_handle_key(struct swaylock_state *state,
 			if (backspace(&state->password) && state->password.len != 0) {
 				state->input_state = INPUT_STATE_BACKSPACE;
 				schedule_password_clear(state);
-				update_highlight(state);
+				update_typing_feedback(state, -1);
 			} else {
 				state->input_state = INPUT_STATE_CLEAR;
 				cancel_password_clear(state);
@@ -209,9 +216,20 @@ void swaylock_handle_key(struct swaylock_state *state,
 			state->input_state = INPUT_STATE_LETTER;
 			schedule_password_clear(state);
 			schedule_input_idle(state);
-			update_highlight(state);
+			update_typing_feedback(state, 1);
 			damage_state(state);
 		}
 		break;
+	}
+}
+
+void swaylock_handle_key(struct swaylock_state *state,
+		xkb_keysym_t keysym, uint32_t codepoint) {
+	handle_key(state, keysym, codepoint);
+
+	// Every path that empties the buffer (escape, ctrl-u, backspacing past the
+	// first character) restarts the animation
+	if (state->password.len == 0) {
+		state->anim_frame = ANIM_FRAME_START;
 	}
 }

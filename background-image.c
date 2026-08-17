@@ -58,6 +58,13 @@ cairo_surface_t *load_background_image(const char *path) {
 
 void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		enum background_mode mode, int buffer_width, int buffer_height) {
+	render_background_image_filtered(cairo, image, mode, buffer_width,
+			buffer_height, CAIRO_FILTER_GOOD);
+}
+
+void render_background_image_filtered(cairo_t *cairo, cairo_surface_t *image,
+		enum background_mode mode, int buffer_width, int buffer_height,
+		cairo_filter_t filter) {
 	double width = cairo_image_surface_get_width(image);
 	double height = cairo_image_surface_get_height(image);
 
@@ -124,6 +131,7 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		assert(0);
 		break;
 	}
+	cairo_pattern_set_filter(cairo_get_source(cairo), filter);
 	cairo_paint(cairo);
 	cairo_restore(cairo);
 }

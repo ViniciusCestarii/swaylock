@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <wayland-client.h>
 #include <wordexp.h>
+#include "animation.h"
 #include "background-image.h"
 #include "cairo.h"
 #include "comm.h"
@@ -108,6 +109,8 @@ static void destroy_surface(struct swaylock_surface *surface) {
 	if (surface->surface != NULL) {
 		wl_surface_destroy(surface->surface);
 	}
+	destroy_buffer(&surface->background_buffers[0]);
+	destroy_buffer(&surface->background_buffers[1]);
 	destroy_buffer(&surface->indicator_buffers[0]);
 	destroy_buffer(&surface->indicator_buffers[1]);
 	wl_output_release(surface->output);
@@ -339,6 +342,27 @@ static char *join_args(char **argv, int argc) {
 	return res;
 }
 
+// The shell will not expand ~ to the value of $HOME when an output name is
+// given. Also, any paths given in the config file need to have shell
+// expansions performed
+static char *expand_path(const char *path) {
+	char *expanded = strdup(path);
+
+	wordexp_t p;
+	while (strstr(expanded, "  ")) {
+		expanded = realloc(expanded, strlen(expanded) + 2);
+		char *ptr = strstr(expanded, "  ") + 1;
+		memmove(ptr + 1, ptr, strlen(ptr) + 1);
+		*ptr = '\\';
+	}
+	if (wordexp(expanded, &p, 0) == 0) {
+		free(expanded);
+		expanded = join_args(p.we_wordv, p.we_wordc);
+		wordfree(&p);
+	}
+	return expanded;
+}
+
 static void load_image(char *arg, struct swaylock_state *state) {
 	// [[<output>]:]<path>
 	struct swaylock_image *image = calloc(1, sizeof(struct swaylock_image));
@@ -372,21 +396,9 @@ static void load_image(char *arg, struct swaylock_state *state) {
 		}
 	}
 
-	// The shell will not expand ~ to the value of $HOME when an output name is
-	// given. Also, any image paths given in the config file need to have shell
-	// expansions performed
-	wordexp_t p;
-	while (strstr(image->path, "  ")) {
-		image->path = realloc(image->path, strlen(image->path) + 2);
-		char *ptr = strstr(image->path, "  ") + 1;
-		memmove(ptr + 1, ptr, strlen(ptr) + 1);
-		*ptr = '\\';
-	}
-	if (wordexp(image->path, &p, 0) == 0) {
-		free(image->path);
-		image->path = join_args(p.we_wordv, p.we_wordc);
-		wordfree(&p);
-	}
+	char *expanded = expand_path(image->path);
+	free(image->path);
+	image->path = expanded;
 
 	// Load the actual image
 	image->cairo_surface = load_background_image(image->path);
@@ -448,7 +460,11 @@ enum line_mode {
 static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		enum line_mode *line_mode, char **config_path) {
 	enum long_option_codes {
-		LO_BS_HL_COLOR = 256,
+		LO_ANIMATION_DIR = 256,
+		LO_ANIMATION_FILTER,
+		LO_ANIMATION_SCALING,
+		LO_ANIMATION_SIZE,
+		LO_BS_HL_COLOR,
 		LO_CAPS_LOCK_BS_HL_COLOR,
 		LO_CAPS_LOCK_KEY_HL_COLOR,
 		LO_FONT,
@@ -505,6 +521,10 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		{"hide-keyboard-layout", no_argument, NULL, 'K'},
 		{"show-failed-attempts", no_argument, NULL, 'F'},
 		{"version", no_argument, NULL, 'v'},
+		{"animation-dir", required_argument, NULL, LO_ANIMATION_DIR},
+		{"animation-filter", required_argument, NULL, LO_ANIMATION_FILTER},
+		{"animation-scaling", required_argument, NULL, LO_ANIMATION_SCALING},
+		{"animation-size", required_argument, NULL, LO_ANIMATION_SIZE},
 		{"bs-hl-color", required_argument, NULL, LO_BS_HL_COLOR},
 		{"caps-lock-bs-hl-color", required_argument, NULL, LO_CAPS_LOCK_BS_HL_COLOR},
 		{"caps-lock-key-hl-color", required_argument, NULL, LO_CAPS_LOCK_KEY_HL_COLOR},
@@ -580,6 +600,19 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 			"Disable the unlock indicator.\n"
 		"  -v, --version                    "
 			"Show the version number and quit.\n"
+		"  --animation-dir <path>           "
+			"Play the images in the given directory over the background, one "
+			"frame per typed character. Frames are ordered by the number "
+			"leading their file name.\n"
+		"  --animation-filter <filter>      "
+			"Scaling filter for the animation frames: smooth or nearest. Use "
+			"nearest to keep pixel art crisp (default: smooth).\n"
+		"  --animation-scaling <mode>       "
+			"Scaling mode for the animation frames, as in --scaling "
+			"(default: fit).\n"
+		"  --animation-size <percent>       "
+			"Share of the screen the animation frames cover, centered "
+			"(default: 100).\n"
 		"  --bs-hl-color <color>            "
 			"Sets the color of backspace highlight segments.\n"
 		"  --caps-lock-bs-hl-color <color>  "
@@ -764,6 +797,44 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		case 'v':
 			fprintf(stdout, "swaylock version " SWAYLOCK_VERSION "\n");
 			exit(EXIT_SUCCESS);
+			break;
+		case LO_ANIMATION_DIR:
+			if (state) {
+				free(state->args.animation_dir);
+				state->args.animation_dir = expand_path(optarg);
+			}
+			break;
+		case LO_ANIMATION_FILTER:
+			if (state) {
+				if (strcmp(optarg, "smooth") == 0) {
+					state->args.animation_filter = CAIRO_FILTER_GOOD;
+				} else if (strcmp(optarg, "nearest") == 0) {
+					state->args.animation_filter = CAIRO_FILTER_NEAREST;
+				} else {
+					swaylock_log(LOG_ERROR,
+						"Unsupported animation filter: %s", optarg);
+					return 1;
+				}
+			}
+			break;
+		case LO_ANIMATION_SCALING:
+			if (state) {
+				state->args.animation_mode = parse_background_mode(optarg);
+				if (state->args.animation_mode == BACKGROUND_MODE_INVALID) {
+					return 1;
+				}
+			}
+			break;
+		case LO_ANIMATION_SIZE:
+			if (state) {
+				long size = strtol(optarg, NULL, 10);
+				if (size < 1 || size > 100) {
+					swaylock_log(LOG_ERROR,
+						"Animation size must be between 1 and 100: %s", optarg);
+					return 1;
+				}
+				state->args.animation_size = size;
+			}
 			break;
 		case LO_BS_HL_COLOR:
 			if (state) {
@@ -1094,8 +1165,12 @@ int main(int argc, char **argv) {
 
 	enum line_mode line_mode = LM_LINE;
 	state.failed_attempts = 0;
+	state.anim_frame = ANIM_FRAME_START;
 	state.args = (struct swaylock_args){
 		.mode = BACKGROUND_MODE_FILL,
+		.animation_mode = BACKGROUND_MODE_FIT,
+		.animation_filter = CAIRO_FILTER_GOOD,
+		.animation_size = 100,
 		.font = strdup("sans-serif"),
 		.font_size = 0,
 		.radius = 50,
@@ -1144,6 +1219,10 @@ int main(int argc, char **argv) {
 			free(state.args.font);
 			return result;
 		}
+	}
+
+	if (state.args.animation_dir) {
+		load_animation(&state.animation, state.args.animation_dir);
 	}
 
 	if (line_mode == LM_INSIDE) {
@@ -1270,6 +1349,8 @@ int main(int argc, char **argv) {
 	wl_display_roundtrip(state.display);
 
 	free(state.args.font);
+	free(state.args.animation_dir);
+	destroy_animation(&state.animation);
 	cairo_destroy(state.test_cairo);
 	cairo_surface_destroy(state.test_surface);
 	return 0;

@@ -27,6 +27,10 @@ _swaylock()
   )
 
   long=(
+    --animation-dir
+    --animation-filter
+    --animation-scaling
+    --animation-size
     --bs-hl-color
     --caps-lock-bs-hl-color
     --caps-lock-key-hl-color

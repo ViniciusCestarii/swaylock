@@ -1,6 +1,10 @@
 # swaylock(1) completion
 
-complete -c swaylock -l bs-hl-color                 --description "Sets the color of backspace highlight segments."
+complete -c swaylock -l animation-dir -r -F        --description "Play the images in the given directory while typing, one frame per character."
+complete -c swaylock -l animation-filter            --description "Scaling filter for the animation frames: smooth or nearest." -xa "smooth nearest"
+complete -c swaylock -l animation-scaling         --description "Scaling mode for the animation frames: stretch, fill, fit, center, tile." -xa "stretch fill fit center tile"
+complete -c swaylock -l animation-size               --description "Share of the screen the animation frames cover, centered (1-100)."
+complete -c swaylock -l bs-hl-color               --description "Sets the color of backspace highlight segments."
 complete -c swaylock -l caps-lock-bs-hl-color       --description "Sets the color of backspace highlight segments when Caps Lock is active."
 complete -c swaylock -l caps-lock-key-hl-color      --description "Sets the color of the key press highlight segments when Caps Lock is active."
 complete -c swaylock -l color                  -s c --description "Turn the screen into the given color instead of white."

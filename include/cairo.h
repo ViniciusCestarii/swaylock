@@ -10,6 +10,8 @@
 #endif
 
 void cairo_set_source_u32(cairo_t *cairo, uint32_t color);
+// hue in [0, 360), sat and val in [0, 1]; returns an RGBA color
+uint32_t hsv_to_u32(double hue, double sat, double val, uint8_t alpha);
 cairo_subpixel_order_t to_cairo_subpixel_order(enum wl_output_subpixel subpixel);
 
 #if HAVE_GDK_PIXBUF

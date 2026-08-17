@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdint.h>
 #include <cairo/cairo.h>
 #include "cairo.h"
@@ -11,6 +12,32 @@ void cairo_set_source_u32(cairo_t *cairo, uint32_t color) {
 			(color >> (2*8) & 0xFF) / 255.0,
 			(color >> (1*8) & 0xFF) / 255.0,
 			(color >> (0*8) & 0xFF) / 255.0);
+}
+
+uint32_t hsv_to_u32(double hue, double sat, double val, uint8_t alpha) {
+	double c = val * sat;
+	double x = c * (1.0 - fabs(fmod(hue / 60.0, 2.0) - 1.0));
+	double m = val - c;
+	double r = 0, g = 0, b = 0;
+
+	if (hue < 60) {
+		r = c; g = x;
+	} else if (hue < 120) {
+		r = x; g = c;
+	} else if (hue < 180) {
+		g = c; b = x;
+	} else if (hue < 240) {
+		g = x; b = c;
+	} else if (hue < 300) {
+		r = x; b = c;
+	} else {
+		r = c; b = x;
+	}
+
+	return (uint32_t)((r + m) * 255) << (3*8) |
+		(uint32_t)((g + m) * 255) << (2*8) |
+		(uint32_t)((b + m) * 255) << (1*8) |
+		alpha;
 }
 
 cairo_subpixel_order_t to_cairo_subpixel_order(enum wl_output_subpixel subpixel) {

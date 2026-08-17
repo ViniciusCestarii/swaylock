@@ -33,6 +33,39 @@ static void set_color_for_state(cairo_t *cairo, struct swaylock_state *state,
 	}
 }
 
+// Fixed background washes for the states that carry a meaning (RGBA)
+#define BACKGROUND_TINT_NONE 0x00000000
+#define BACKGROUND_TINT_CLEARED 0x8A8A8A55
+#define BACKGROUND_TINT_VERIFYING 0x3B82F655
+#define BACKGROUND_TINT_WRONG 0xE23C3C77
+
+// The animation frame to draw over the background, if any. The animation only
+// plays while there is something in the password buffer.
+static cairo_surface_t *background_frame(struct swaylock_state *state) {
+	if (state->password.len == 0) {
+		return NULL;
+	}
+	return animation_frame(&state->animation, state->anim_frame);
+}
+
+// The color washed over the background image for the current state
+static uint32_t background_tint(struct swaylock_state *state) {
+	if (state->input_state == INPUT_STATE_CLEAR) {
+		return BACKGROUND_TINT_CLEARED;
+	} else if (state->auth_state == AUTH_STATE_VALIDATING) {
+		return BACKGROUND_TINT_VERIFYING;
+	} else if (state->auth_state == AUTH_STATE_INVALID) {
+		return BACKGROUND_TINT_WRONG;
+	} else if (state->input_state == INPUT_STATE_LETTER ||
+			state->input_state == INPUT_STATE_BACKSPACE) {
+		// The animation carries the feedback on its own; a random wash on top
+		// of it would only muddy the frames
+		return state->animation.frame_count > 0 ?
+			BACKGROUND_TINT_NONE : state->typing_tint;
+	}
+	return BACKGROUND_TINT_NONE;
+}
+
 static void surface_frame_handle_done(void *data, struct wl_callback *callback,
 		uint32_t time) {
 	struct swaylock_surface *surface = data;
@@ -63,20 +96,22 @@ void render(struct swaylock_surface *surface) {
 		return;
 	}
 
-	bool need_destroy = false;
-	struct pool_buffer buffer;
+	uint32_t tint = background_tint(state);
+	cairo_surface_t *frame = background_frame(state);
 
 	if (buffer_width != surface->last_buffer_width ||
-			buffer_height != surface->last_buffer_height) {
-		need_destroy = true;
-		if (!create_buffer(state->shm, &buffer, buffer_width, buffer_height,
-				WL_SHM_FORMAT_ARGB8888)) {
+			buffer_height != surface->last_buffer_height ||
+			tint != surface->last_buffer_tint ||
+			frame != surface->last_buffer_frame) {
+		struct pool_buffer *buffer = get_next_buffer(state->shm,
+				surface->background_buffers, buffer_width, buffer_height);
+		if (buffer == NULL) {
 			swaylock_log(LOG_ERROR,
-				"Failed to create new buffer for frame background.");
+				"Failed to get a buffer for frame background.");
 			return;
 		}
 
-		cairo_t *cairo = buffer.cairo;
+		cairo_t *cairo = buffer->cairo;
 		cairo_set_antialias(cairo, CAIRO_ANTIALIAS_BEST);
 
 		cairo_save(cairo);
@@ -88,15 +123,41 @@ void render(struct swaylock_surface *surface) {
 			render_background_image(cairo, surface->image,
 				state->args.mode, buffer_width, buffer_height);
 		}
+		if (frame) {
+			// Frames cover a share of the output, centered. Keeping them
+			// smaller than the screen limits how far a low resolution source
+			// has to be scaled up
+			int frame_width = buffer_width * state->args.animation_size / 100;
+			int frame_height = buffer_height * state->args.animation_size / 100;
+
+			cairo_identity_matrix(cairo);
+			cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+			cairo_save(cairo);
+			cairo_translate(cairo, (buffer_width - frame_width) / 2,
+				(buffer_height - frame_height) / 2);
+			cairo_rectangle(cairo, 0, 0, frame_width, frame_height);
+			cairo_clip(cairo);
+			render_background_image_filtered(cairo, frame,
+				state->args.animation_mode, frame_width, frame_height,
+				state->args.animation_filter);
+			cairo_restore(cairo);
+		}
+		if (tint != BACKGROUND_TINT_NONE) {
+			cairo_identity_matrix(cairo);
+			cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+			cairo_set_source_u32(cairo, tint);
+			cairo_paint(cairo);
+		}
 		cairo_restore(cairo);
 		cairo_identity_matrix(cairo);
 
-		wl_surface_attach(surface->surface, buffer.buffer, 0, 0);
+		wl_surface_attach(surface->surface, buffer->buffer, 0, 0);
 		wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
-		need_destroy = true;
 
 		surface->last_buffer_width = buffer_width;
 		surface->last_buffer_height = buffer_height;
+		surface->last_buffer_tint = tint;
+		surface->last_buffer_frame = frame;
 	}
 
 	// It is possible for the surface scale to change even if the wl_buffer size hasn't
@@ -107,10 +168,6 @@ void render(struct swaylock_surface *surface) {
 	surface->frame = wl_surface_frame(surface->surface);
 	wl_callback_add_listener(surface->frame, &surface_frame_listener, surface);
 	wl_surface_commit(surface->surface);
-
-	if (need_destroy) {
-		destroy_buffer(&buffer);
-	}
 }
 
 static void configure_font_drawing(cairo_t *cairo, struct swaylock_state *state,
